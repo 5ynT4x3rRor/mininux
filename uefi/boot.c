@@ -21,9 +21,26 @@ struct usb_device_descriptor {
     UINT8 NumConfigurations;
 } __attribute__((packed));
 
+struct usb_interface_descriptor {
+    UINT8 Length;
+    UINT8 DescriptorType;
+    UINT8 InterfaceNumber;
+    UINT8 AlternateSetting;
+    UINT8 NumEndpoints;
+    UINT8 InterfaceClass;
+    UINT8 InterfaceSubClass;
+    UINT8 InterfaceProtocol;
+    UINT8 Interface;
+} __attribute__((packed));
+
 typedef EFI_STATUS (EFIAPI *usb_get_device_descriptor)(
     VOID *this,
     struct usb_device_descriptor *descriptor
+);
+
+typedef EFI_STATUS (EFIAPI *usb_get_interface_descriptor)(
+    VOID *this,
+    struct usb_interface_descriptor *descriptor
 );
 
 struct usb_io_protocol {
@@ -34,6 +51,8 @@ struct usb_io_protocol {
     VOID *isochronous_transfer;
     VOID *async_isochronous_transfer;
     usb_get_device_descriptor get_device_descriptor;
+    VOID *get_config_descriptor;
+    usb_get_interface_descriptor get_interface_descriptor;
 };
 
 static EFI_GUID usb_io_protocol_guid = {
@@ -146,6 +165,8 @@ static VOID gop_clear(UINT32 color)
     cursor_y = 0;
 }
 
+static VOID gop_text(CONST CHAR8 *text);
+
 static VOID gop_text(CONST CHAR8 *text)
 {
     UINTN cell_w = 8 * glyph_scale;
@@ -164,6 +185,17 @@ static VOID gop_text(CONST CHAR8 *text)
         }
         if (c == '\r') {
             continue;
+        }
+        if (c == '\b') {
+            if (cursor_x >= cell_w) {
+                cursor_x -= cell_w;
+                gop_text(" ");
+                cursor_x -= cell_w;
+            }
+            continue;
+        }
+        if (cursor_y + cell_h > screen_height) {
+            gop_clear(0x00103060);
         }
         if (cursor_x + cell_w > screen_width) {
             cursor_x = 0;
@@ -241,6 +273,69 @@ static EFI_STATUS save_report(EFI_HANDLE image_handle, EFI_SYSTEM_TABLE *system_
     return status;
 }
 
+static VOID show_char(EFI_SIMPLE_TEXT_OUT_PROTOCOL *output, CHAR8 c)
+{
+    CHAR8 text[2] = {c, '\0'};
+    show(output, text);
+}
+
+static BOOLEAN same(CONST CHAR8 *a, CONST CHAR8 *b)
+{
+    while (*a != '\0' && *a == *b) {
+        a++;
+        b++;
+    }
+    return *a == *b;
+}
+
+static VOID keyboard_shell(EFI_SYSTEM_TABLE *system_table, EFI_SIMPLE_TEXT_OUT_PROTOCOL *output)
+{
+    CHAR8 line[80];
+    UINTN length = 0;
+
+    show(output, "\r\nClavier: tapez 'help'.\r\n> ");
+    for (;;) {
+        EFI_INPUT_KEY key;
+        EFI_STATUS status = uefi_call_wrapper(system_table->ConIn->ReadKeyStroke, 2,
+                                              system_table->ConIn, &key);
+
+        if (EFI_ERROR(status)) {
+            uefi_call_wrapper(system_table->BootServices->Stall, 1, 10000);
+            continue;
+        }
+        if (key.UnicodeChar == '\r' || key.UnicodeChar == '\n') {
+            line[length] = '\0';
+            show(output, "\r\n");
+            if (same(line, "help")) {
+                show(output, "help clear usb reboot shutdown ; sinon echo\r\n");
+            } else if (same(line, "clear")) {
+                gop_clear(0x00103060);
+            } else if (same(line, "usb")) {
+                show(output, report);
+            } else if (same(line, "reboot")) {
+                uefi_call_wrapper(system_table->RuntimeServices->ResetSystem, 4,
+                                  EfiResetCold, EFI_SUCCESS, 0, NULL);
+            } else if (same(line, "shutdown")) {
+                uefi_call_wrapper(system_table->RuntimeServices->ResetSystem, 4,
+                                  EfiResetShutdown, EFI_SUCCESS, 0, NULL);
+            } else if (length != 0) {
+                show(output, line);
+                show(output, "\r\n");
+            }
+            length = 0;
+            show(output, "> ");
+        } else if (key.UnicodeChar == 8) {
+            if (length != 0) {
+                length--;
+                show(output, "\b");
+            }
+        } else if (key.UnicodeChar >= 32 && key.UnicodeChar < 127 && length + 1 < sizeof(line)) {
+            line[length++] = (CHAR8)key.UnicodeChar;
+            show_char(output, (CHAR8)key.UnicodeChar);
+        }
+    }
+}
+
 EFI_STATUS efi_main(EFI_HANDLE image_handle, EFI_SYSTEM_TABLE *system_table)
 {
     EFI_STATUS status;
@@ -270,10 +365,13 @@ EFI_STATUS efi_main(EFI_HANDLE image_handle, EFI_SYSTEM_TABLE *system_table)
         append_text("Aucun peripherique USB visible via EFI_USB_IO_PROTOCOL.\r\n");
     } else {
         UINTN found = 0;
+        UINTN keyboards = 0;
 
         for (UINTN index = 0; index < handle_count; index++) {
             struct usb_io_protocol *usb = NULL;
             struct usb_device_descriptor descriptor;
+            struct usb_interface_descriptor interface;
+            BOOLEAN keyboard = FALSE;
 
             status = uefi_call_wrapper(system_table->BootServices->HandleProtocol, 3,
                                        handles[index], &usb_io_protocol_guid,
@@ -287,6 +385,14 @@ EFI_STATUS efi_main(EFI_HANDLE image_handle, EFI_SYSTEM_TABLE *system_table)
                 continue;
             }
 
+            if (usb->get_interface_descriptor != NULL &&
+                !EFI_ERROR(uefi_call_wrapper(usb->get_interface_descriptor, 2, usb, &interface))) {
+                keyboard = interface.InterfaceClass == 3 && interface.InterfaceSubClass == 1 &&
+                           interface.InterfaceProtocol == 1;
+            }
+            if (keyboard) {
+                keyboards++;
+            }
             found++;
             append_text("USB ");
             append_decimal(found);
@@ -302,7 +408,7 @@ EFI_STATUS efi_main(EFI_HANDLE image_handle, EFI_SYSTEM_TABLE *system_table)
             append_hex(descriptor.DeviceProtocol, 2);
             append_text(" rev ");
             append_hex(descriptor.BcdDevice, 4);
-            append_text("\r\n");
+            append_text(keyboard ? " CLAVIER\r\n" : "\r\n");
         }
 
         if (found == 0) {
@@ -310,6 +416,8 @@ EFI_STATUS efi_main(EFI_HANDLE image_handle, EFI_SYSTEM_TABLE *system_table)
         } else {
             append_text("\r\nNombre de peripheriques USB: ");
             append_decimal(found);
+            append_text("\r\nClaviers USB (HID boot): ");
+            append_decimal(keyboards);
             append_text("\r\n");
         }
     }
@@ -331,7 +439,6 @@ EFI_STATUS efi_main(EFI_HANDLE image_handle, EFI_SYSTEM_TABLE *system_table)
                 "\r\nRapport EFI non sauvegarde.\r\n" :
                 "\r\nRapport sauvegarde: MININUX.TXT\r\n");
 
-    for (;;) {
-        uefi_call_wrapper(system_table->BootServices->Stall, 1, 1000000);
-    }
+    keyboard_shell(system_table, output);
+    return EFI_SUCCESS;
 }
