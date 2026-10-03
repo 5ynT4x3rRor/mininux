@@ -24,7 +24,7 @@ etre enumeres avant de determiner leurs firmwares.
 
 ## Préparer une clé USB
 
-Construire l’image dédiée :
+Construire l’image UEFI dédiée :
 
 ```bash
 make clean
@@ -46,9 +46,23 @@ sudo dd if=mininux-usb.img of=/dev/sdX bs=4M status=progress conv=fsync
 
 Remplacer `/dev/sdX` par le périphérique réel de la clé, jamais par une partition et jamais par le disque système.
 
+L'image UEFI contient une partition EFI FAT32 de type MBR et le chemin
+amovible standard `EFI/BOOT/BOOTX64.EFI`. Ce programme inventorie les
+périphériques exposés par le firmware via `EFI_USB_IO_PROTOCOL`, affiche leurs
+VID:PID/classe/révision et sauvegarde le résultat dans `MININUX.TXT` à la racine
+de la partition. Ce diagnostic UEFI n'exécute pas encore le noyau BIOS 32 bits.
+
+Après le démarrage, récupérer le rapport sur Fedora :
+
+```bash
+make read-report DEV=/dev/sdX
+```
+
+La cible lit `/dev/sdX1` et crée `rapport-mininux.txt`.
+
 ## Inventaire USB (xHCI)
 
-La commande `usb` prend le controleur xHCI en charge, enumere les peripheriques
+La commande BIOS `usb` prend le controleur xHCI en charge, enumere les peripheriques
 (hubs USB2 compris, profondeur 2) et affiche VID:PID, classe, vitesse et une
 indication de firmware. `usb-next` et `usb-prev` changent de page.
 
@@ -58,7 +72,7 @@ l'emulation clavier PS/2 du BIOS. Le clavier peut cesser de repondre apres
 
 ## Rapport automatique sur la cle
 
-La commande `report` lance `hardware`, `firmware` puis `usb` toute seule et ecrit
+La commande BIOS `report` lance `hardware`, `firmware` puis `usb` toute seule et ecrit
 le texte dans les secteurs 64 a 191 de la cle de demarrage (via INT 13h, en
 repassant brievement en mode reel). Cette zone est hors de l'image (50 secteurs) :
 elle survit aux redemarrages et a un nouveau `dd` de l'image.
@@ -67,4 +81,4 @@ Le rapport est ecrit deux fois : apres la phase PCI/firmware, puis apres le scan
 USB (si le BIOS ne sait plus ecrire sur la cle apres la prise de controle de
 l'xHCI, la phase PCI reste lisible). Sur Fedora :
 
-    make read-report DEV=/dev/sdX    # cree rapport-mininux.txt (sudo si besoin)
+    make read-bios-report DEV=/dev/sdX    # cree rapport-mininux.txt (sudo si besoin)

@@ -1,0 +1,7 @@
+.mininux-*.o
+mininux-uefi.img
+mininux-usb.img
+uefi/*.o
+uefi/*.so
+uefi/BOOTX64.EFI
+rapport-mininux.txt

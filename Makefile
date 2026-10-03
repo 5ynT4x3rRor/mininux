@@ -3,7 +3,7 @@ CC := gcc
 LD := ld
 QEMU := qemu-system-x86_64
 
-.PHONY: all run read-report tinyc-check tinyc-test uefi-check uefi-image usb-image clean
+.PHONY: all run read-report read-bios-report tinyc-check tinyc-test uefi-check uefi-image usb-image clean
 
 all: mininux.img
 
@@ -32,11 +32,17 @@ run: mininux.img
 	$(QEMU) -drive format=raw,file=$<
 
 read-report:
-	@test -n "$(DEV)" || { echo "usage: make read-report DEV=/dev/sdX"; exit 1; }
-	dd if=$(DEV) bs=512 skip=64 count=128 status=none | tr -d '\000' > rapport-mininux.txt
+	@case "$$DEV" in /dev/sd[a-z]|/dev/nvme[0-9]n[0-9]|/dev/mmcblk[0-9]) ;; *) echo "usage: make read-report DEV=/dev/sdX"; exit 1;; esac
+	@P="$$DEV"1; test -b "$$P" || { echo "partition UEFI absente: $$P"; exit 1; }
+	mcopy -i "$$DEV"1 ::/MININUX.TXT rapport-mininux.txt
 	@echo "rapport-mininux.txt ecrit"
 
-usb-image: mininux.img
+read-bios-report:
+	@case "$$DEV" in /dev/sd[a-z]|/dev/nvme[0-9]n[0-9]|/dev/mmcblk[0-9]) ;; *) echo "usage: make read-bios-report DEV=/dev/sdX"; exit 1;; esac
+	dd if="$$DEV" bs=512 skip=64 count=128 status=none | tr -d '\000' > rapport-mininux.txt
+	@echo "rapport-mininux.txt ecrit"
+
+usb-image: mininux-uefi.img
 	cp $< mininux-usb.img
 
 tinyc-check:
@@ -51,24 +57,28 @@ tinyc-test:
 	rm -f .mininux-tinyc-test
 
 uefi-check:
-	$(CC) -ffreestanding -fshort-wchar -mno-red-zone -fno-stack-protector -nostdinc -c uefi/boot.c -o .mininux-uefi-boot.o
+	$(CC) -I/usr/include/efi -I/usr/include/efi/x86_64 -ffreestanding -fshort-wchar -mno-red-zone -maccumulate-outgoing-args -fno-stack-protector -c uefi/boot.c -o .mininux-uefi-boot.o
 	rm -f .mininux-uefi-boot.o
 
 uefi/boot.o: uefi/boot.c
-	$(CC) -I/usr/include/efi -I/usr/include/efi/x86_64 -ffreestanding -fpic -fshort-wchar -mno-red-zone -fno-stack-protector -c $< -o $@
+	$(CC) -I/usr/include/efi -I/usr/include/efi/x86_64 -ffreestanding -fpic -fshort-wchar -mno-red-zone -maccumulate-outgoing-args -fno-stack-protector -c $< -o $@
 
 uefi/boot.so: uefi/boot.o
-	$(LD) -nostdlib -znocombreloc -T /usr/lib/elf_x86_64_efi.lds /usr/lib/crt0-efi-x86_64.o $< -L/usr/lib -lefi -lgnuefi -o $@
+	$(LD) -nostdlib -znocombreloc -shared -Bsymbolic -T /usr/lib/elf_x86_64_efi.lds /usr/lib/crt0-efi-x86_64.o $< -L/usr/lib -lefi -lgnuefi -o $@
 
 uefi/BOOTX64.EFI: uefi/boot.so
-	objcopy -j .text -j .sdata -j .data -j .rodata -j .dynamic -j .dynsym -j .rel -j .rela -j .reloc --target=efi-app-x86_64 $< $@
+	objcopy -I elf64-x86-64 -O efi-app-x86_64 -j .text -j .sdata -j .data -j .rodata -j .dynamic -j .dynsym -j .rel -j .rela -j .reloc $< $@
 
-uefi-image: uefi/BOOTX64.EFI
-	rm -f uefi.img
-	dd if=/dev/zero of=uefi.img bs=1M count=16 status=none
-	mkfs.fat -F 32 uefi.img >/dev/null
-	mmd -i uefi.img ::/EFI ::/EFI/BOOT
-	mcopy -i uefi.img uefi/BOOTX64.EFI ::/EFI/BOOT/
+uefi-image: mininux-uefi.img
+
+mininux-uefi.img: uefi/BOOTX64.EFI
+	dd if=/dev/zero of=mininux-uefi.img bs=1M count=64 status=none
+	parted -s mininux-uefi.img mklabel msdos
+	parted -s mininux-uefi.img mkpart primary fat32 1MiB 100%
+	parted -s mininux-uefi.img set 1 esp on
+	mkfs.fat -F 32 --offset=2048 mininux-uefi.img >/dev/null
+	mmd -i mininux-uefi.img@@1048576 ::/EFI ::/EFI/BOOT
+	mcopy -i mininux-uefi.img@@1048576 uefi/BOOTX64.EFI ::/EFI/BOOT/BOOTX64.EFI
 
 clean:
-	rm -f boot.bin kernel.o usb.o kernel.bin kernel.padded mininux.img mininux-usb.img uefi/boot.o uefi/boot.so uefi/BOOTX64.EFI uefi.img .mininux-tinyc-*.o
+	rm -f boot.bin kernel.o usb.o kernel.bin kernel.padded mininux.img mininux-usb.img mininux-uefi.img uefi/boot.o uefi/boot.so uefi/BOOTX64.EFI uefi.img .mininux-tinyc-*.o
