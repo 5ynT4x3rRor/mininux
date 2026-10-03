@@ -1,5 +1,6 @@
 #include <efi.h>
 #include <efilib.h>
+#include "font8x16.h"
 
 #define REPORT_CAPACITY 8192U
 
@@ -97,6 +98,103 @@ static VOID print_ascii(EFI_SIMPLE_TEXT_OUT_PROTOCOL *output, CONST CHAR8 *text)
     }
 }
 
+static EFI_GRAPHICS_OUTPUT_PROTOCOL *gop;
+static UINT32 *framebuffer;
+static UINTN screen_width, screen_height, screen_stride, glyph_scale;
+static UINTN cursor_x, cursor_y;
+
+static VOID gop_init(EFI_SYSTEM_TABLE *system_table)
+{
+    EFI_GUID gop_guid = EFI_GRAPHICS_OUTPUT_PROTOCOL_GUID;
+    EFI_STATUS status;
+    EFI_GRAPHICS_OUTPUT_MODE_INFORMATION *info;
+
+    status = uefi_call_wrapper(system_table->BootServices->LocateProtocol, 3,
+                               &gop_guid, NULL, (VOID **)&gop);
+    if (EFI_ERROR(status) || gop == NULL || gop->Mode == NULL || gop->Mode->Info == NULL) {
+        gop = NULL;
+        return;
+    }
+    info = gop->Mode->Info;
+    if ((info->PixelFormat != PixelRedGreenBlueReserved8BitPerColor &&
+         info->PixelFormat != PixelBlueGreenRedReserved8BitPerColor) ||
+        gop->Mode->FrameBufferBase == 0 || info->PixelsPerScanLine < info->HorizontalResolution) {
+        gop = NULL;
+        return;
+    }
+    framebuffer = (UINT32 *)(UINTN)gop->Mode->FrameBufferBase;
+    screen_width = info->HorizontalResolution;
+    screen_height = info->VerticalResolution;
+    screen_stride = info->PixelsPerScanLine;
+    glyph_scale = screen_width / 800;
+    if (glyph_scale == 0) {
+        glyph_scale = 1;
+    }
+}
+
+static VOID gop_clear(UINT32 color)
+{
+    if (gop == NULL) {
+        return;
+    }
+    for (UINTN y = 0; y < screen_height; y++) {
+        for (UINTN x = 0; x < screen_width; x++) {
+            framebuffer[y * screen_stride + x] = color;
+        }
+    }
+    cursor_x = 0;
+    cursor_y = 0;
+}
+
+static VOID gop_text(CONST CHAR8 *text)
+{
+    UINTN cell_w = 8 * glyph_scale;
+    UINTN cell_h = 16 * glyph_scale;
+
+    if (gop == NULL) {
+        return;
+    }
+    for (; *text != '\0'; text++) {
+        UINT8 c = (UINT8)*text;
+
+        if (c == '\n') {
+            cursor_x = 0;
+            cursor_y += cell_h;
+            continue;
+        }
+        if (c == '\r') {
+            continue;
+        }
+        if (cursor_x + cell_w > screen_width) {
+            cursor_x = 0;
+            cursor_y += cell_h;
+        }
+        if (cursor_y + cell_h > screen_height) {
+            return;
+        }
+        if (c >= 128) {
+            c = '?';
+        }
+        for (UINTN row = 0; row < cell_h; row++) {
+            UINT8 bits = font8x16[c * 16 + row / glyph_scale];
+            for (UINTN col = 0; col < cell_w; col++) {
+                framebuffer[(cursor_y + row) * screen_stride + cursor_x + col] =
+                    (bits & (0x80 >> (col / glyph_scale))) ? 0x00ffffff : 0x00103060;
+            }
+        }
+        cursor_x += cell_w;
+    }
+}
+
+static VOID show(EFI_SIMPLE_TEXT_OUT_PROTOCOL *output, CONST CHAR8 *text)
+{
+    if (gop != NULL) {
+        gop_text(text);
+    } else {
+        print_ascii(output, text);
+    }
+}
+
 static EFI_STATUS save_report(EFI_HANDLE image_handle, EFI_SYSTEM_TABLE *system_table)
 {
     EFI_STATUS status;
@@ -150,13 +248,15 @@ EFI_STATUS efi_main(EFI_HANDLE image_handle, EFI_SYSTEM_TABLE *system_table)
     UINTN handle_count = 0;
     EFI_SIMPLE_TEXT_OUT_PROTOCOL *output = system_table->ConOut;
 
-    print_ascii(output, "MiniNux UEFI: scan des peripheriques USB\r\n");
+    gop_init(system_table);
+    gop_clear(0x00103060);
+    show(output, "MiniNux UEFI: scan des peripheriques USB\r\n");
     report_length = 0;
     append_text("MININUX UEFI - INVENTAIRE USB\r\n\r\n");
     append_text("Application EFI demarree.\r\n");
     status = save_report(image_handle, system_table);
     if (EFI_ERROR(status)) {
-        print_ascii(output, "Echec sauvegarde initiale EFI\r\n");
+        show(output, "Echec sauvegarde initiale EFI\r\n");
     }
 
     status = uefi_call_wrapper(system_table->BootServices->LocateHandleBuffer, 5,
@@ -226,8 +326,8 @@ EFI_STATUS efi_main(EFI_HANDLE image_handle, EFI_SYSTEM_TABLE *system_table)
         append_text("\r\n");
         save_report(image_handle, system_table);
     }
-    print_ascii(output, report);
-    print_ascii(output, EFI_ERROR(status) ?
+    show(output, report);
+    show(output, EFI_ERROR(status) ?
                 "\r\nRapport EFI non sauvegarde.\r\n" :
                 "\r\nRapport sauvegarde: MININUX.TXT\r\n");
 
