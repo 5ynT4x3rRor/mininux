@@ -1,9 +1,17 @@
-# MiniNux filesystem
+# Arborescence MiniNux
 
-The image keeps system commands and security tools in separate directories:
+```
+/usr/sys/bin        commandes systeme, sans droits root
+/usr/pentest/bin    outils de pentest, sans droits root
+/root/sys/bin       commandes systeme reservees a root (admin)
+/root/pentest/bin   outils de pentest necessitant root
+/etc  /home  /tmp
+```
 
-- `bin/` for core MiniNux commands;
-- `security/bin/` for authorized security tools.
+`filesystem/rootfs/` est le modele de cette arborescence. Tout ce qui est sous
+`/root` est reserve au compte administrateur. `ls [chemin]` parcourt l'arbre et
+`which <commande>` donne le chemin d'une commande. Les repertoires pentest sont
+vides pour l'instant.
 
-The future TinyC compiler will be stored as `/bin/tinyc` when its source code
-is added to the project.
+Les fichiers de l'utilisateur (`write`, `cat`...) restent dans le stockage
+persistant plat, hors de cette arborescence.

@@ -396,13 +396,150 @@ static unsigned char can_modify_file(unsigned int slot)
     return is_admin() || file_slot_owner(slot) == (unsigned int)session_user;
 }
 
+static unsigned char text_has_slash(const char *text)
+{
+    for (; *text != '\0'; text++) {
+        if (*text == '/') {
+            return 1;
+        }
+    }
+    return 0;
+}
+
+/* Arborescence: les commandes sont rangees par niveau de privilege. */
+enum { DIR_USR_SYS, DIR_ROOT_SYS };
+
+static const char *const directories[] = {
+    "/usr", "/usr/sys", "/usr/sys/bin", "/usr/pentest", "/usr/pentest/bin",
+    "/root", "/root/sys", "/root/sys/bin", "/root/pentest", "/root/pentest/bin",
+    "/etc", "/home", "/tmp"
+};
+
+static const char *const bin_paths[] = {"/usr/sys/bin", "/root/sys/bin"};
+
+static const struct {
+    const char *name;
+    unsigned char dir;
+} commands[] = {
+    {"help", DIR_USR_SYS}, {"clear", DIR_USR_SYS}, {"whoami", DIR_USR_SYS},
+    {"users", DIR_USR_SYS}, {"logout", DIR_USR_SYS}, {"passwd", DIR_USR_SYS},
+    {"ls", DIR_USR_SYS}, {"which", DIR_USR_SYS}, {"tinyc", DIR_USR_SYS},
+    {"files", DIR_USR_SYS}, {"cat", DIR_USR_SYS}, {"write", DIR_USR_SYS},
+    {"append", DIR_USR_SYS}, {"rm", DIR_USR_SYS}, {"hardware", DIR_USR_SYS},
+    {"hardware-next", DIR_USR_SYS}, {"hardware-prev", DIR_USR_SYS},
+    {"firmware", DIR_USR_SYS},
+    {"useradd", DIR_ROOT_SYS}, {"userdel", DIR_ROOT_SYS}, {"usb", DIR_ROOT_SYS},
+    {"usb-next", DIR_ROOT_SYS}, {"usb-prev", DIR_ROOT_SYS}, {"report", DIR_ROOT_SYS}
+};
+
+#define COMMAND_COUNT (sizeof(commands) / sizeof(commands[0]))
+#define DIRECTORY_COUNT (sizeof(directories) / sizeof(directories[0]))
+
+static int command_find(const char *name)
+{
+    for (unsigned int index = 0; index < COMMAND_COUNT; index++) {
+        if (text_equal(commands[index].name, name)) {
+            return (int)index;
+        }
+    }
+    return -1;
+}
+
+static unsigned char path_is_root_only(const char *path)
+{
+    return path[0] == '/' && path[1] == 'r' && path[2] == 'o' && path[3] == 'o' &&
+           path[4] == 't' && (path[5] == '\0' || path[5] == '/');
+}
+
+static unsigned char is_direct_child(const char *parent, const char *path)
+{
+    unsigned int length = text_length(parent);
+
+    if (length == 1) {
+        return path[0] == '/' && path[1] != '\0' && text_length(path) > 1 &&
+               !text_has_slash(path + 1);
+    }
+    for (unsigned int index = 0; index < length; index++) {
+        if (path[index] != parent[index]) {
+            return 0;
+        }
+    }
+    return path[length] == '/' && path[length + 1] != '\0' &&
+           !text_has_slash(path + length + 1);
+}
+
+static void command_ls(char *cursor)
+{
+    char *path = next_word(&cursor);
+    unsigned char known = 0;
+    unsigned char listed = 0;
+
+    output_start();
+    if (path == 0) {
+        path = "/";
+    }
+    if (text_length(path) > 1 && path[text_length(path) - 1U] == '/') {
+        output_line("Chemin invalide (pas de / final).");
+        return;
+    }
+    if (path_is_root_only(path) && !is_admin()) {
+        output_line("Acces refuse.");
+        return;
+    }
+    if (text_equal(path, "/")) {
+        output_line("usr  root  etc  home  tmp");
+        return;
+    }
+    for (unsigned int index = 0; index < DIRECTORY_COUNT; index++) {
+        if (text_equal(directories[index], path)) {
+            known = 1;
+        } else if (is_direct_child(path, directories[index])) {
+            output_line(directories[index]);
+            listed = 1;
+        }
+    }
+    for (unsigned int index = 0; index < sizeof(bin_paths) / sizeof(bin_paths[0]); index++) {
+        if (text_equal(bin_paths[index], path)) {
+            for (unsigned int cmd = 0; cmd < COMMAND_COUNT; cmd++) {
+                if (commands[cmd].dir == index) {
+                    output_line(commands[cmd].name);
+                }
+            }
+            listed = 1;
+        }
+    }
+    if (!known) {
+        output_line("Chemin introuvable.");
+    } else if (!listed) {
+        output_line("(vide)");
+    }
+}
+
+static void command_which(char *cursor)
+{
+    char *name = next_word(&cursor);
+    int index = name == 0 ? -1 : command_find(name);
+
+    output_start();
+    if (index < 0 || (commands[index].dir == DIR_ROOT_SYS && !is_admin())) {
+        output_line("Commande introuvable.");
+    } else {
+        char line[48];
+        unsigned int position = append_text(line, 0, bin_paths[commands[index].dir]);
+
+        position = append_text(line, position, "/");
+        append_text(line, position, commands[index].name);
+        output_line(line);
+    }
+}
+
 static void command_help(void)
 {
-    output_line("Commandes: help clear whoami users logout passwd [nom] ls tinyc");
+    output_line("Commandes: help clear whoami users logout passwd [nom] ls [chemin] which tinyc");
     output_line("Materiel: hardware hardware-next hardware-prev firmware");
     output_line("Fichiers (persistants): files cat <nom> rm <nom>");
     output_line("  write [-s] <nom> <texte>   (-s: lisible par tous)   append <nom> <texte>");
-    output_line("Administrateur: useradd <nom> [admin] userdel <nom> usb usb-next usb-prev report");
+    output_line("/root/sys/bin (admin): useradd <nom> [admin] userdel <nom> usb usb-next usb-prev report");
 }
 
 static void command_users(void)
@@ -659,7 +796,6 @@ static unsigned char run_command(char *line)
 {
     char *cursor = line;
     char *word = next_word(&cursor);
-    const volatile unsigned char *filesystem = (const volatile unsigned char *)0x18000;
 
     if (word == 0) {
         return 0;
@@ -690,11 +826,9 @@ static unsigned char run_command(char *line)
     } else if (text_equal(word, "rm")) {
         command_rm(cursor);
     } else if (text_equal(word, "ls")) {
-        output_start();
-        if (filesystem[0] == 'M' && filesystem[1] == 'N' && filesystem[2] == 'F' && filesystem[3] == 'S') {
-            output_line("/bin");
-            output_line("/security/bin");
-        }
+        command_ls(cursor);
+    } else if (text_equal(word, "which")) {
+        command_which(cursor);
     } else if (text_equal(word, "tinyc")) {
         output_start();
         output_line("TinyC: compilateur freestanding charge");
@@ -717,7 +851,7 @@ static unsigned char run_command(char *line)
                text_equal(word, "usb-prev") || text_equal(word, "report")) {
         if (!is_admin()) {
             output_start();
-            output_line("Acces refuse: commande reservee a l'administrateur.");
+            output_line("Acces refuse: binaire de /root/sys/bin (administrateur).");
         } else if (text_equal(word, "useradd")) {
             command_useradd(cursor);
         } else if (text_equal(word, "userdel")) {

@@ -1,4 +1,8 @@
 MNFS1
-/bin
-/security/bin
-/bin/tinyc
+/usr/sys/bin
+/usr/pentest/bin
+/root/sys/bin
+/root/pentest/bin
+/etc
+/home
+/tmp

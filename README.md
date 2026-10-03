@@ -106,3 +106,9 @@ build/         objets et binaires intermédiaires (ignoré par git)
 ```
 
 `make` produit `mininux.img` (BIOS) ; `make mininux-uefi.img` produit l'image UEFI.
+
+## Racine du système
+
+`/usr/sys/bin` (commandes sans root), `/root/sys/bin` (commandes admin),
+`/usr/pentest/bin` et `/root/pentest/bin` (outils de pentest, vides pour l'instant),
+plus `/etc /home /tmp`. Commandes `ls [chemin]` et `which <cmd>`. Voir `filesystem/README.md`.
