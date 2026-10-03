@@ -45,3 +45,13 @@ sudo dd if=mininux-usb.img of=/dev/sdX bs=4M status=progress conv=fsync
 ```
 
 Remplacer `/dev/sdX` par le périphérique réel de la clé, jamais par une partition et jamais par le disque système.
+
+## Inventaire USB (xHCI)
+
+La commande `usb` prend le controleur xHCI en charge, enumere les peripheriques
+(hubs USB2 compris, profondeur 2) et affiche VID:PID, classe, vitesse et une
+indication de firmware. `usb-next` et `usb-prev` changent de page.
+
+Attention : sur un vrai Mac, la prise de controle de l'xHCI peut couper
+l'emulation clavier PS/2 du BIOS. Le clavier peut cesser de repondre apres
+`usb` ; il faut alors redemarrer.

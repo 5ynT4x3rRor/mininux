@@ -10,20 +10,23 @@ all: mininux.img
 boot.bin: boot.asm
 	$(ASM) -f bin $< -o $@
 
-kernel.o: kernel.c
+kernel.o: kernel.c usb.h
 	$(CC) -m32 -Os -fno-toplevel-reorder -ffreestanding -fno-pie -fno-stack-protector -fno-asynchronous-unwind-tables -fno-unwind-tables -nostdlib -c $< -o $@
 
-kernel.bin: kernel.o
-	$(LD) -m elf_i386 -e kernel_main -Ttext 0x10000 --oformat binary -o $@ $<
+usb.o: usb.c usb.h
+	$(CC) -m32 -Os -ffreestanding -fno-pie -fno-stack-protector -fno-asynchronous-unwind-tables -fno-unwind-tables -nostdlib -c $< -o $@
+
+kernel.bin: kernel.o usb.o
+	$(LD) -m elf_i386 -e kernel_main -Ttext 0x10000 --oformat binary -o $@ kernel.o usb.o
 
 kernel.padded: kernel.bin
-	test "$$(wc -c < $<)" -le 10240
+	test "$$(wc -c < $<)" -le 22528
 	cp $< $@
-	truncate -s 10240 $@
+	truncate -s 24576 $@
 
 mininux.img: boot.bin kernel.padded filesystem/manifest
 	cat boot.bin kernel.padded filesystem/manifest > $@
-	truncate -s 11264 $@
+	truncate -s 25600 $@
 
 run: mininux.img
 	$(QEMU) -drive format=raw,file=$<
@@ -63,4 +66,4 @@ uefi-image: uefi/BOOTX64.EFI
 	mcopy -i uefi.img uefi/BOOTX64.EFI ::/EFI/BOOT/
 
 clean:
-	rm -f boot.bin kernel.o kernel.bin kernel.padded mininux.img mininux-usb.img uefi/boot.o uefi/boot.so uefi/BOOTX64.EFI uefi.img .mininux-tinyc-*.o
+	rm -f boot.bin kernel.o usb.o kernel.bin kernel.padded mininux.img mininux-usb.img uefi/boot.o uefi/boot.so uefi/BOOTX64.EFI uefi.img .mininux-tinyc-*.o

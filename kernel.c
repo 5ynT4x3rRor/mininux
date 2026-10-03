@@ -1,14 +1,26 @@
+#include "usb.h"
+
+#define USB_MAX 16U
+
+static struct usb_entry usb_entries[USB_MAX];
+static unsigned int usb_count;
+static unsigned int usb_controllers;
+static unsigned int usb_status;
+static unsigned int usb_page;
+static unsigned char usb_scanned;
+
 static unsigned char read_port(unsigned short port);
 static unsigned int read_port_dword(unsigned short port);
 static void write_port_dword(unsigned short port, unsigned int value);
 static void disable_hardware_cursor(void);
 static void write_line(volatile unsigned char *video, unsigned int row, const char *text);
-static unsigned int pci_read_config(unsigned char bus, unsigned char device,
-                                    unsigned char function, unsigned char offset);
 static unsigned int pci_count_devices(void);
 static unsigned char pci_has_device(unsigned short vendor, unsigned short device_id);
 static void show_hardware(volatile unsigned char *video, unsigned int page);
 static void show_firmware(volatile unsigned char *video);
+static void show_usb(volatile unsigned char *video, unsigned int page);
+static unsigned char command_is(const char *command, unsigned int length, const char *name);
+static const char *usb_firmware_hint(const struct usb_entry *entry);
 static const char *pci_class_name(unsigned char class_code, unsigned char subclass);
 static const char *pci_driver_hint(unsigned short vendor, unsigned char class_code,
                                    unsigned char subclass, unsigned char prog_if);
@@ -24,7 +36,7 @@ static unsigned int append_decimal(char *buffer, unsigned int position,
 void kernel_main(void)
 {
     volatile unsigned char *video = (volatile unsigned char *)0xb8000;
-    const volatile unsigned char *filesystem = (const volatile unsigned char *)0x12800;
+    const volatile unsigned char *filesystem = (const volatile unsigned char *)0x16000;
     const char kernel_message[] = "Kernel C actif !";
     const char welcome_message[] = "Bienvenue dans MiniNux";
     const char prompt[] = "MiniNux> ";
@@ -108,6 +120,19 @@ void kernel_main(void)
                         show_hardware(video, hardware_page);
                     } else if (command_length == 8 && command[0] == 'f' && command[1] == 'i' && command[2] == 'r' && command[3] == 'm' && command[4] == 'w' && command[5] == 'a' && command[6] == 'r' && command[7] == 'e') {
                         show_firmware(video);
+                    } else if (command_is(command, command_length, "usb")) {
+                        usb_page = 0;
+                        usb_scanned = 1;
+                        usb_count = usb_scan(usb_entries, USB_MAX, &usb_controllers, &usb_status);
+                        show_usb(video, usb_page);
+                    } else if (command_is(command, command_length, "usb-next")) {
+                        usb_page++;
+                        show_usb(video, usb_page);
+                    } else if (command_is(command, command_length, "usb-prev")) {
+                        if (usb_page > 0) {
+                            usb_page--;
+                        }
+                        show_usb(video, usb_page);
                     } else if (command_length != 0) {
                         write_line(video, 2, "Commande inconnue");
                     }
@@ -175,8 +200,40 @@ static void write_line(volatile unsigned char *video, unsigned int row, const ch
     }
 }
 
-static unsigned int pci_read_config(unsigned char bus, unsigned char device,
-                                    unsigned char function, unsigned char offset)
+static unsigned char command_is(const char *command, unsigned int length, const char *name)
+{
+    unsigned int index = 0;
+
+    while (name[index] != '\0') {
+        index++;
+    }
+    if (index != length) {
+        return 0;
+    }
+    for (index = 0; index < length; index++) {
+        if (command[index] != name[index]) {
+            return 0;
+        }
+    }
+    return 1;
+}
+
+void pci_write_config(unsigned char bus, unsigned char device,
+                      unsigned char function, unsigned char offset,
+                      unsigned int value)
+{
+    unsigned int address = 0x80000000U |
+                           ((unsigned int)bus << 16) |
+                           ((unsigned int)device << 11) |
+                           ((unsigned int)function << 8) |
+                           ((unsigned int)offset & 0xfcU);
+
+    write_port_dword(0x0cf8, address);
+    write_port_dword(0x0cfc, value);
+}
+
+unsigned int pci_read_config(unsigned char bus, unsigned char device,
+                             unsigned char function, unsigned char offset)
 {
     unsigned int address = 0x80000000U |
                            ((unsigned int)bus << 16) |
@@ -269,7 +326,7 @@ static void show_firmware(volatile unsigned char *video)
     write_line(video, 16, "Clavier/trackpad: 05ac:0291, hid_apple/bcm5974");
     write_line(video, 18, "Audio: snd_hda_intel/cirrus; pas de blob confirme");
     write_line(video, 20, "Fichier Bluetooth .hcd: revision exacte requise");
-    write_line(video, 22, "USB non scanne: cette liste n'est pas complete");
+    write_line(video, 22, usb_scanned ? "USB scanne: voir la commande usb" : "USB non scanne: lancez usb (liste incomplete)");
     } else {
         write_line(video, 4, "Profil Air 2015 non confirme par les ID PCI.");
         write_line(video, 6, "BCM4360 attendu: 14e4:43a0");
@@ -620,4 +677,105 @@ static void show_hardware(volatile unsigned char *video, unsigned int page)
         append_text(summary, position, " | FW a confirmer avec le modele exact");
         write_line(video, 23, summary);
     }
+}
+static const char *usb_firmware_hint(const struct usb_entry *entry)
+{
+    if (entry->vendor == 0x05ac && entry->product == 0x828f) {
+        return "Bluetooth Broadcom; .hcd a confirmer";
+    }
+    if (entry->vendor == 0x0a5c && entry->product == 0x4500) {
+        return "hub interne, pas de FW";
+    }
+    if (entry->vendor == 0x05ac && entry->product == 0x0291) {
+        return "clavier/trackpad, pas de FW";
+    }
+    if (entry->device_class == 9) {
+        return "hub, pas de FW";
+    }
+    if (entry->device_class == 3) {
+        return "HID, pas de FW";
+    }
+    if (entry->device_class == 0xe0) {
+        return "Bluetooth/sans fil: FW selon fabricant";
+    }
+    return "FW inconnu";
+}
+
+static void show_usb(volatile unsigned char *video, unsigned int page)
+{
+    unsigned int pages = (usb_count + 4U) / 5U;
+    unsigned int first;
+    unsigned int row = 3;
+    char line[80];
+    unsigned int position;
+
+    for (unsigned int clear_row = 2; clear_row <= 23; clear_row++) {
+        for (unsigned int column = 0; column < 80; column++) {
+            video[(clear_row * 80 + column) * 2] = ' ';
+            video[(clear_row * 80 + column) * 2 + 1] = 0x07;
+        }
+    }
+    write_line(video, 2, "USB (xHCI) - peripheriques");
+
+    if (usb_controllers == 0) {
+        write_line(video, 4, "Aucun controleur xHCI detecte (classe PCI 0c:03:30).");
+        return;
+    }
+    if (usb_status != 0) {
+        write_line(video, 21, (usb_status & USB_STATUS_BAR_UNUSABLE) ?
+                   "Attention: BAR xHCI inutilisable" : "Attention: init xHCI echouee");
+    }
+    if (usb_count == 0) {
+        write_line(video, 4, "Aucun peripherique USB enumere.");
+        return;
+    }
+    if (page >= pages) {
+        page = pages - 1U;
+        usb_page = page;
+    }
+    first = page * 5U;
+
+    for (unsigned int index = first; index < usb_count && index < first + 5U; index++) {
+        const struct usb_entry *entry = &usb_entries[index];
+
+        position = 0;
+        line[0] = '\0';
+        position = append_text(line, position, "Port ");
+        position = append_decimal(line, position, entry->root_port);
+        position = append_text(line, position, " route ");
+        position = append_hex(line, position, entry->route, 5);
+        position = append_text(line, position, " ");
+        if (entry->flags & USB_FLAG_FAILED) {
+            position = append_text(line, position, "lecture echouee");
+        } else {
+            position = append_hex(line, position, entry->vendor, 4);
+            position = append_text(line, position, ":");
+            position = append_hex(line, position, entry->product, 4);
+            position = append_text(line, position, " classe ");
+            position = append_hex(line, position, entry->device_class, 2);
+            position = append_text(line, position, entry->speed >= 4 ? " SS" :
+                                   (entry->speed == 3 ? " HS" : " FS/LS"));
+        }
+        write_line(video, row, line);
+
+        position = 0;
+        line[0] = '\0';
+        position = append_text(line, position, "  FW?: ");
+        position = append_text(line, position,
+                               (entry->flags & USB_FLAG_HUB_SKIPPED) ? "hub non parcouru" :
+                               usb_firmware_hint(entry));
+        write_line(video, row + 1, line);
+        row += 3;
+    }
+
+    position = 0;
+    line[0] = '\0';
+    position = append_text(line, position, "Peripheriques: ");
+    position = append_decimal(line, position, usb_count);
+    position = append_text(line, position, " | page ");
+    position = append_decimal(line, position, page + 1);
+    position = append_text(line, position, "/");
+    position = append_decimal(line, position, pages);
+    position = append_text(line, position, " | usb-next/prev");
+    write_line(video, 23, line);
 }
