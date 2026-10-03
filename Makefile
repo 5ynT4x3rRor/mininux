@@ -10,23 +10,31 @@ all: mininux.img
 boot.bin: boot.asm
 	$(ASM) -f bin $< -o $@
 
-kernel.o: kernel.c usb.h
-	$(CC) -m32 -Os -fno-toplevel-reorder -ffreestanding -fno-pie -fno-stack-protector -fno-asynchronous-unwind-tables -fno-unwind-tables -nostdlib -c $< -o $@
+KERNEL_CFLAGS := -m32 -Os -fno-tree-loop-distribute-patterns -ffreestanding -fno-pie -fno-stack-protector -fno-asynchronous-unwind-tables -fno-unwind-tables -nostdlib
+
+kernel.o: kernel.c usb.h crypto.h persist.h
+	$(CC) -m32 -Os -fno-tree-loop-distribute-patterns -fno-toplevel-reorder -ffreestanding -fno-pie -fno-stack-protector -fno-asynchronous-unwind-tables -fno-unwind-tables -nostdlib -c $< -o $@
 
 usb.o: usb.c usb.h
-	$(CC) -m32 -Os -ffreestanding -fno-pie -fno-stack-protector -fno-asynchronous-unwind-tables -fno-unwind-tables -nostdlib -c $< -o $@
+	$(CC) $(KERNEL_CFLAGS) -c $< -o $@
 
-kernel.bin: kernel.o usb.o
-	$(LD) -m elf_i386 -e kernel_main -Ttext 0x10000 --oformat binary -o $@ kernel.o usb.o
+crypto.o: crypto.c crypto.h
+	$(CC) $(KERNEL_CFLAGS) -c $< -o $@
+
+persist.o: persist.c persist.h crypto.h
+	$(CC) $(KERNEL_CFLAGS) -c $< -o $@
+
+kernel.bin: kernel.o usb.o crypto.o persist.o
+	$(LD) -m elf_i386 -e kernel_main -Ttext 0x10000 -z noseparate-code --oformat binary -o $@ kernel.o usb.o crypto.o persist.o
 
 kernel.padded: kernel.bin
-	test "$$(wc -c < $<)" -le 22528
+	test "$$(wc -c < $<)" -le 30720
 	cp $< $@
-	truncate -s 24576 $@
+	truncate -s 32768 $@
 
 mininux.img: boot.bin kernel.padded filesystem/manifest
 	cat boot.bin kernel.padded filesystem/manifest > $@
-	truncate -s 25600 $@
+	truncate -s 33792 $@
 
 run: mininux.img
 	$(QEMU) -drive format=raw,file=$<
@@ -81,4 +89,4 @@ mininux-uefi.img: uefi/BOOTX64.EFI
 	mcopy -i mininux-uefi.img@@1048576 uefi/BOOTX64.EFI ::/EFI/BOOT/BOOTX64.EFI
 
 clean:
-	rm -f boot.bin kernel.o usb.o kernel.bin kernel.padded mininux.img mininux-usb.img mininux-uefi.img uefi/boot.o uefi/boot.so uefi/BOOTX64.EFI uefi.img .mininux-tinyc-*.o
+	rm -f boot.bin kernel.o usb.o crypto.o persist.o kernel.bin kernel.padded mininux.img mininux-usb.img mininux-uefi.img uefi/boot.o uefi/boot.so uefi/BOOTX64.EFI uefi.img .mininux-tinyc-*.o

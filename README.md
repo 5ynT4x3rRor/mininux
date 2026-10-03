@@ -82,3 +82,13 @@ USB (si le BIOS ne sait plus ecrire sur la cle apres la prise de controle de
 l'xHCI, la phase PCI reste lisible). Sur Fedora :
 
     make read-bios-report DEV=/dev/sdX    # cree rapport-mininux.txt (sudo si besoin)
+
+## Comptes, fichiers et persistance (noyau BIOS)
+
+- Premier démarrage : création du compte admin (mot de passe 8–40 caractères).
+- Mots de passe : PBKDF2-HMAC-SHA256 salé ; temporisation après échecs.
+- Commandes : `help whoami users logout passwd ls files cat write [-s] append rm`;
+  admin : `useradd <nom> [admin]`, `userdel`, `usb`, `report`.
+- Persistance : deux copies A/B (LBA 256 et 272) sur le disque de boot, validées par SHA-256.
+- Limites : pas de chiffrement ; un accès disque hors ligne permet de réécrire le stockage.
+  Entropie faible sans RDRAND. Testé uniquement sous QEMU (BIOS), pas sur le Mac.

@@ -12,14 +12,15 @@ start:
     mov [boot_drive], dl
 
 load_kernel:
-    mov ax, 0x1000
-    mov es, ax
-    xor bx, bx
-    mov ah, 0x02
-    mov al, 49
-    mov ch, 0
-    mov cl, 2
-    mov dh, 0
+    ; Lecture etendue (LBA 1, 65 secteurs) vers 0x1000:0000: pas de limite de piste CHS.
+    mov si, 0x600
+    mov word [si], 0x10
+    mov word [si + 2], 65
+    mov word [si + 4], 0
+    mov word [si + 6], 0x1000
+    mov dword [si + 8], 1
+    mov dword [si + 12], 0
+    mov ah, 0x42
     mov dl, [boot_drive]
     int 0x13
 
@@ -93,7 +94,7 @@ rm_start:
     mov sp, 0x7000
     mov dl, [boot_drive]
     mov si, 0x600
-    mov ah, 0x43
+    mov ah, [0x5fd]
     xor al, al
     sti
     int 0x13
