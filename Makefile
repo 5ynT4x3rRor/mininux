@@ -20,10 +20,10 @@ $(B)/boot.bin: src/boot/boot.asm | $(B)
 
 KERNEL_CFLAGS := -m32 -Os -fno-tree-loop-distribute-patterns -ffreestanding -fno-pie -fno-stack-protector -fno-asynchronous-unwind-tables -fno-unwind-tables -nostdlib
 
-KERNEL_OBJS := $(B)/kernel.o $(B)/usb.o $(B)/crypto.o $(B)/persist.o $(B)/driver.o
+KERNEL_OBJS := $(B)/kernel.o $(B)/usb.o $(B)/crypto.o $(B)/persist.o $(B)/driver.o $(B)/tinyc-lexer.o $(B)/tinyc-compiler.o
 
-$(B)/kernel.o: $(K)/kernel.c $(K)/usb.h $(K)/crypto.h $(K)/persist.h $(K)/driver.h | $(B)
-	$(CC) -m32 -Os -fno-tree-loop-distribute-patterns -fno-toplevel-reorder -ffreestanding -fno-pie -fno-stack-protector -fno-asynchronous-unwind-tables -fno-unwind-tables -nostdlib -c $< -o $@
+$(B)/kernel.o: $(K)/kernel.c $(K)/usb.h $(K)/crypto.h $(K)/persist.h $(K)/driver.h $(T)/compiler.h | $(B)
+	$(CC) -m32 -Os -fno-tree-loop-distribute-patterns -fno-toplevel-reorder -ffreestanding -fno-pie -fno-stack-protector -fno-asynchronous-unwind-tables -fno-unwind-tables -nostdlib -I$(T) -c $< -o $@
 
 $(B)/usb.o: $(K)/usb.c $(K)/usb.h | $(B)
 	$(CC) $(KERNEL_CFLAGS) -c $< -o $@
@@ -33,6 +33,12 @@ $(B)/crypto.o: $(K)/crypto.c $(K)/crypto.h | $(B)
 
 $(B)/driver.o: $(K)/driver.c $(K)/driver.h $(K)/usb.h | $(B)
 	$(CC) $(KERNEL_CFLAGS) -c $< -o $@
+
+$(B)/tinyc-lexer.o: $(T)/lexer.c $(T)/lexer.h | $(B)
+	$(CC) $(KERNEL_CFLAGS) -I$(T) -c $< -o $@
+
+$(B)/tinyc-compiler.o: $(T)/compiler.c $(T)/compiler.h $(T)/lexer.h | $(B)
+	$(CC) $(KERNEL_CFLAGS) -I$(T) -c $< -o $@
 
 $(B)/persist.o: $(K)/persist.c $(K)/persist.h $(K)/crypto.h | $(B)
 	$(CC) $(KERNEL_CFLAGS) -c $< -o $@
@@ -69,12 +75,10 @@ usb-image: mininux-uefi.img
 
 tinyc-check:
 	$(CC) -m32 -ffreestanding -fno-pie -fno-stack-protector -fno-asynchronous-unwind-tables -fno-unwind-tables -nostdinc -I$(T) -c $(T)/lexer.c -o .mininux-tinyc-lexer.o
-	$(CC) -m32 -ffreestanding -fno-pie -fno-stack-protector -fno-asynchronous-unwind-tables -fno-unwind-tables -nostdinc -I$(T) -c $(T)/parser.c -o .mininux-tinyc-parser.o
-	$(CC) -m32 -ffreestanding -fno-pie -fno-stack-protector -fno-asynchronous-unwind-tables -fno-unwind-tables -nostdinc -I$(T) -c $(T)/codegen.c -o .mininux-tinyc-codegen.o
 	$(CC) -m32 -ffreestanding -fno-pie -fno-stack-protector -fno-asynchronous-unwind-tables -fno-unwind-tables -nostdinc -I$(T) -c $(T)/compiler.c -o .mininux-tinyc-compiler.o
 
 tinyc-test:
-	$(CC) -I$(T) $(T)/lexer.c $(T)/parser.c $(T)/codegen.c $(T)/compiler.c $(T)/test_compiler.c -o .mininux-tinyc-test
+	$(CC) -I$(T) $(T)/lexer.c $(T)/compiler.c $(T)/test_compiler.c -o .mininux-tinyc-test
 	./.mininux-tinyc-test
 	rm -f .mininux-tinyc-test
 
@@ -87,7 +91,7 @@ $(U)/boot.o: $(U)/boot.c
 
 UEFI_CFLAGS := -I/usr/include/efi -I/usr/include/efi/x86_64 -ffreestanding -fpic -fshort-wchar -mno-red-zone -maccumulate-outgoing-args -fno-stack-protector -fno-builtin
 
-$(U)/shell.o: $(U)/shell.c $(K)/crypto.h $(K)/persist.h
+$(U)/shell.o: $(U)/shell.c $(K)/crypto.h $(K)/persist.h $(T)/compiler.h
 	$(CC) $(UEFI_CFLAGS) -c $< -o $@
 
 $(U)/crypto.o: $(K)/crypto.c $(K)/crypto.h
@@ -96,7 +100,13 @@ $(U)/crypto.o: $(K)/crypto.c $(K)/crypto.h
 $(U)/persist.o: $(K)/persist.c $(K)/persist.h $(K)/crypto.h
 	$(CC) $(UEFI_CFLAGS) -DMININUX_UEFI -c $< -o $@
 
-$(U)/boot.so: $(U)/boot.o $(U)/shell.o $(U)/crypto.o $(U)/persist.o
+$(U)/tinyc-lexer.o: $(T)/lexer.c $(T)/lexer.h
+	$(CC) $(UEFI_CFLAGS) -I$(T) -c $< -o $@
+
+$(U)/tinyc-compiler.o: $(T)/compiler.c $(T)/compiler.h $(T)/lexer.h
+	$(CC) $(UEFI_CFLAGS) -I$(T) -c $< -o $@
+
+$(U)/boot.so: $(U)/boot.o $(U)/shell.o $(U)/crypto.o $(U)/persist.o $(U)/tinyc-lexer.o $(U)/tinyc-compiler.o
 	$(LD) -nostdlib -znocombreloc -shared -Bsymbolic -T /usr/lib/elf_x86_64_efi.lds /usr/lib/crt0-efi-x86_64.o $^ -L/usr/lib -lefi -lgnuefi -o $@
 
 $(U)/BOOTX64.EFI: $(U)/boot.so

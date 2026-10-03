@@ -3,6 +3,7 @@
 
 enum tinyc_token_kind {
     TINYC_EOF,
+    TINYC_INVALID,
     TINYC_IDENTIFIER,
     TINYC_NUMBER,
     TINYC_INT,

@@ -2,6 +2,7 @@
 #include "crypto.h"
 #include "persist.h"
 #include "driver.h"
+#include "compiler.h"
 
 #define USB_MAX 16U
 
@@ -560,12 +561,72 @@ static void command_drivers(void)
     }
 }
 
+static void command_tinyc(char *cursor)
+{
+    char *name = next_word(&cursor);
+    char source[MN_FILE_DATA + 1];
+    unsigned char bytecode[256];
+    unsigned int source_length;
+    unsigned int bytecode_length;
+    int result;
+    int slot;
+
+    output_start();
+    if (name == 0) {
+        output_line("Usage: tinyc <fichier.c>");
+        return;
+    }
+    slot = file_find(name);
+    if (slot < 0 || !can_read_file((unsigned int)slot)) {
+        output_line("Fichier introuvable.");
+        return;
+    }
+    source_length = file_slot_length((unsigned int)slot);
+    if (source_length > MN_FILE_DATA) {
+        output_line("Source trop grande.");
+        return;
+    }
+    mn_copy(source, file_slot_data((unsigned int)slot), source_length);
+    source[source_length] = '\0';
+    bytecode_length = tinyc_compile_source(source, bytecode, sizeof(bytecode));
+    mn_zero(source, sizeof(source));
+    if (bytecode_length == 0) {
+        output_line("Erreur TinyC: source invalide ou bytecode trop grand.");
+    } else if (tinyc_execute(bytecode, bytecode_length, &result) != 0) {
+        output_line("Erreur TinyC: execution invalide (division par zero?).");
+    } else {
+        char output[32];
+        char digits[12];
+        unsigned int count = 0;
+        unsigned int position = 0;
+        unsigned int value;
+
+        if (result < 0) {
+            output[position++] = '-';
+            value = 0U - (unsigned int)result;
+        } else {
+            value = (unsigned int)result;
+        }
+        do {
+            digits[count++] = (char)('0' + value % 10);
+            value /= 10;
+        } while (value != 0);
+        while (count != 0) {
+            output[position++] = digits[--count];
+        }
+        output[position] = '\0';
+        output_pair("Programme compile et execute. main() = ", output);
+    }
+    mn_zero(bytecode, sizeof(bytecode));
+}
+
 static void command_help(void)
 {
-    output_line("Commandes: help clear whoami users logout passwd [nom] ls [chemin] which tinyc");
+    output_line("Commandes: help clear whoami users logout passwd [nom] ls [chemin] which");
     output_line("Materiel: drivers hardware hardware-next hardware-prev firmware");
     output_line("Fichiers (persistants): files cat <nom> rm <nom>");
     output_line("  write [-s] <nom> <texte>   (-s: lisible par tous)   append <nom> <texte>");
+    output_line("TinyC: tinyc <fichier.c> (int main() { return expression; })");
     output_line("/root/sys/bin (admin): useradd <nom> [admin] userdel <nom> usb usb-next usb-prev report");
 }
 
@@ -857,9 +918,7 @@ static unsigned char run_command(char *line)
     } else if (text_equal(word, "which")) {
         command_which(cursor);
     } else if (text_equal(word, "tinyc")) {
-        output_start();
-        output_line("TinyC: compilateur freestanding charge");
-        output_line("Syntaxe: int main() { return nombre; }");
+        command_tinyc(cursor);
     } else if (text_equal(word, "hardware")) {
         hardware_page = 0;
         show_hardware(screen, hardware_page);

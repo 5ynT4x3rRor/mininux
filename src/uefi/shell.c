@@ -2,6 +2,7 @@
 #include <efilib.h>
 #include "../kernel/crypto.h"
 #include "../kernel/persist.h"
+#include "../tinyc/compiler.h"
 
 void con_print(const CHAR8 *text);
 void con_clear(void);
@@ -256,7 +257,7 @@ static const char *const directories[] = {
 
 static const char *const user_bin[] = {
     "help", "clear", "whoami", "users", "logout", "passwd", "ls", "which",
-    "files", "cat", "write", "append", "rm", "usb"
+    "files", "cat", "write", "append", "rm", "tinyc", "usb"
 };
 static const char *const root_bin[] = {"useradd", "userdel", "reboot", "shutdown"};
 
@@ -602,11 +603,70 @@ static void command_rm(char *cursor)
     }
 }
 
+static void command_tinyc(char *cursor)
+{
+    char *name = next_word(&cursor);
+    char source[MN_FILE_DATA + 1];
+    unsigned char bytecode[256];
+    unsigned int source_length;
+    unsigned int bytecode_length;
+    int result;
+    int slot;
+
+    if (name == 0) {
+        say("Usage: tinyc <fichier.c>");
+        return;
+    }
+    slot = file_find(name);
+    if (slot < 0 || !can_read_file((unsigned int)slot)) {
+        say("Fichier introuvable.");
+        return;
+    }
+    source_length = file_slot_length((unsigned int)slot);
+    if (source_length > MN_FILE_DATA) {
+        say("Source trop grande.");
+        return;
+    }
+    mn_copy(source, file_slot_data((unsigned int)slot), source_length);
+    source[source_length] = '\0';
+    bytecode_length = tinyc_compile_source(source, bytecode, sizeof(bytecode));
+    mn_zero(source, sizeof(source));
+    if (bytecode_length == 0) {
+        say("Erreur TinyC: source invalide ou bytecode trop grand.");
+    } else if (tinyc_execute(bytecode, bytecode_length, &result) != 0) {
+        say("Erreur TinyC: execution invalide (division par zero?).");
+    } else {
+        char output[32];
+        char digits[12];
+        unsigned int count = 0;
+        unsigned int position = 0;
+        unsigned int value;
+
+        if (result < 0) {
+            output[position++] = '-';
+            value = 0U - (unsigned int)result;
+        } else {
+            value = (unsigned int)result;
+        }
+        do {
+            digits[count++] = (char)('0' + value % 10);
+            value /= 10;
+        } while (value != 0);
+        while (count != 0) {
+            output[position++] = digits[--count];
+        }
+        output[position] = '\0';
+        say2("Programme compile et execute. main() = ", output);
+    }
+    mn_zero(bytecode, sizeof(bytecode));
+}
+
 static void command_help(void)
 {
     say("/usr/sys/bin: help clear whoami users logout passwd [nom] ls [chemin] which usb");
     say("Fichiers (persistants): files cat <nom> rm <nom> append <nom> <texte>");
     say("  write [-s] <nom> <texte>   (-s: lisible par tous)");
+    say("TinyC: tinyc <fichier.c> (int main() { return expression; })");
     say("/root/sys/bin (admin): useradd <nom> [admin]  userdel <nom>  reboot  shutdown");
 }
 
@@ -645,6 +705,8 @@ static unsigned char run_command(char *line)
         command_write(cursor, 1);
     } else if (seq(word, "rm")) {
         command_rm(cursor);
+    } else if (seq(word, "tinyc")) {
+        command_tinyc(cursor);
     } else if (seq(word, "usb")) {
         con_print(usb_report());
     } else if (seq(word, "useradd") || seq(word, "userdel") ||

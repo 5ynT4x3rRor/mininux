@@ -128,3 +128,19 @@ premier démarrage (création de l'admin), login, utilisateurs, fichiers, arbore
 et `/root/sys/bin`. Les données sont dans `MNDISK.IMG` sur la partition EFI de la clé
 (persistant, lisible depuis Fedora). Le clavier passe par le firmware (ConIn).
 Le scan USB reste dans `MININUX.TXT` et s'affiche avec la commande `usb`.
+
+### Compilateur TinyC
+
+TinyC est accessible dans le terminal BIOS et UEFI. Exemple :
+
+```
+write calc.c int main() { return 40 + 2; }
+tinyc calc.c
+```
+
+Les variables locales initialisées sont aussi supportées : `int main() { int x = 40; int y = 2; return x + y; }`.
+Le compilateur traduit ce sous-ensemble C en bytecode et l'exécute dans un
+interpréteur borné ; il n'exécute pas de code machine arbitraire. La syntaxe
+actuelle est un unique `int main()` avec des déclarations locales optionnelles,
+un `return` et une expression entière (littéraux, variables, parenthèses,
+signe moins, `+ - * /`). Voir `src/tinyc/README.md`.

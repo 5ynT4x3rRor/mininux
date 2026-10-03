@@ -85,6 +85,6 @@ struct tinyc_token tinyc_next_token(struct tinyc_lexer *lexer)
                  source[start] == '(' ? TINYC_LPAREN :
                  source[start] == ')' ? TINYC_RPAREN :
                  source[start] == '{' ? TINYC_LBRACE :
-                 source[start] == '}' ? TINYC_RBRACE : TINYC_EOF;
+                 source[start] == '}' ? TINYC_RBRACE : TINYC_INVALID;
     return token;
 }
