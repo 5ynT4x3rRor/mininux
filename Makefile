@@ -20,9 +20,9 @@ $(B)/boot.bin: src/boot/boot.asm | $(B)
 
 KERNEL_CFLAGS := -m32 -Os -fno-tree-loop-distribute-patterns -ffreestanding -fno-pie -fno-stack-protector -fno-asynchronous-unwind-tables -fno-unwind-tables -nostdlib
 
-KERNEL_OBJS := $(B)/kernel.o $(B)/usb.o $(B)/crypto.o $(B)/persist.o
+KERNEL_OBJS := $(B)/kernel.o $(B)/usb.o $(B)/crypto.o $(B)/persist.o $(B)/driver.o
 
-$(B)/kernel.o: $(K)/kernel.c $(K)/usb.h $(K)/crypto.h $(K)/persist.h | $(B)
+$(B)/kernel.o: $(K)/kernel.c $(K)/usb.h $(K)/crypto.h $(K)/persist.h $(K)/driver.h | $(B)
 	$(CC) -m32 -Os -fno-tree-loop-distribute-patterns -fno-toplevel-reorder -ffreestanding -fno-pie -fno-stack-protector -fno-asynchronous-unwind-tables -fno-unwind-tables -nostdlib -c $< -o $@
 
 $(B)/usb.o: $(K)/usb.c $(K)/usb.h | $(B)
@@ -31,11 +31,14 @@ $(B)/usb.o: $(K)/usb.c $(K)/usb.h | $(B)
 $(B)/crypto.o: $(K)/crypto.c $(K)/crypto.h | $(B)
 	$(CC) $(KERNEL_CFLAGS) -c $< -o $@
 
+$(B)/driver.o: $(K)/driver.c $(K)/driver.h $(K)/usb.h | $(B)
+	$(CC) $(KERNEL_CFLAGS) -c $< -o $@
+
 $(B)/persist.o: $(K)/persist.c $(K)/persist.h $(K)/crypto.h | $(B)
 	$(CC) $(KERNEL_CFLAGS) -c $< -o $@
 
 $(B)/kernel.bin: $(KERNEL_OBJS)
-	$(LD) -m elf_i386 -e kernel_main -Ttext 0x10000 -z noseparate-code --oformat binary -o $@ $(KERNEL_OBJS)
+	$(LD) -m elf_i386 -e kernel_main -Ttext 0x10000 -z noseparate-code -z max-page-size=16 --oformat binary -o $@ $(KERNEL_OBJS)
 
 $(B)/kernel.padded: $(B)/kernel.bin
 	test "$$(wc -c < $<)" -le 30720

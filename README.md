@@ -112,3 +112,11 @@ build/         objets et binaires intermédiaires (ignoré par git)
 `/usr/sys/bin` (commandes sans root), `/root/sys/bin` (commandes admin),
 `/usr/pentest/bin` et `/root/pentest/bin` (outils de pentest, vides pour l'instant),
 plus `/etc /home /tmp`. Commandes `ls [chemin]` et `which <cmd>`. Voir `filesystem/README.md`.
+
+## Pilotes chargés au démarrage
+
+`src/kernel/driver.c` contient une table de pilotes. Au boot, le noyau parcourt le bus PCI,
+associe chaque périphérique à un pilote (vendor/device ou classe) et appelle son `init`.
+La commande `drivers` affiche l'état : `charge`, `SANS PILOTE` ou `ECHEC`.
+Chargés aujourd'hui : vga-text, ps2-kbd, bios-disk, xhci (activation mémoire + bus mastering).
+Reconnus mais sans pilote : ahci, nvme, bcm4360 (Wi-Fi interne), Intel graphics, audio.

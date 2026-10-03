@@ -1,6 +1,7 @@
 #include "usb.h"
 #include "crypto.h"
 #include "persist.h"
+#include "driver.h"
 
 #define USB_MAX 16U
 
@@ -427,7 +428,7 @@ static const struct {
     {"files", DIR_USR_SYS}, {"cat", DIR_USR_SYS}, {"write", DIR_USR_SYS},
     {"append", DIR_USR_SYS}, {"rm", DIR_USR_SYS}, {"hardware", DIR_USR_SYS},
     {"hardware-next", DIR_USR_SYS}, {"hardware-prev", DIR_USR_SYS},
-    {"firmware", DIR_USR_SYS},
+    {"firmware", DIR_USR_SYS}, {"drivers", DIR_USR_SYS},
     {"useradd", DIR_ROOT_SYS}, {"userdel", DIR_ROOT_SYS}, {"usb", DIR_ROOT_SYS},
     {"usb-next", DIR_ROOT_SYS}, {"usb-prev", DIR_ROOT_SYS}, {"report", DIR_ROOT_SYS}
 };
@@ -533,10 +534,36 @@ static void command_which(char *cursor)
     }
 }
 
+static void command_drivers(void)
+{
+    static const char *const state_text[] = {"charge", "SANS PILOTE", "ECHEC"};
+
+    output_start();
+    for (unsigned int index = 0; index < driver_count(); index++) {
+        const struct driver_record *record = driver_get(index);
+        char line[80];
+        unsigned int position = append_text(line, 0, record->name);
+
+        while (position < 12) {
+            line[position++] = ' ';
+        }
+        if (record->vendor != 0) {
+            position = append_hex(line, position, record->vendor, 4);
+            line[position++] = ':';
+            position = append_hex(line, position, record->device, 4);
+            position = append_text(line, position, "  ");
+        } else {
+            position = append_text(line, position, "(noyau)    ");
+        }
+        append_text(line, position, state_text[record->state]);
+        output_line(line);
+    }
+}
+
 static void command_help(void)
 {
     output_line("Commandes: help clear whoami users logout passwd [nom] ls [chemin] which tinyc");
-    output_line("Materiel: hardware hardware-next hardware-prev firmware");
+    output_line("Materiel: drivers hardware hardware-next hardware-prev firmware");
     output_line("Fichiers (persistants): files cat <nom> rm <nom>");
     output_line("  write [-s] <nom> <texte>   (-s: lisible par tous)   append <nom> <texte>");
     output_line("/root/sys/bin (admin): useradd <nom> [admin] userdel <nom> usb usb-next usb-prev report");
@@ -844,6 +871,8 @@ static unsigned char run_command(char *line)
             hardware_page--;
         }
         show_hardware(screen, hardware_page);
+    } else if (text_equal(word, "drivers")) {
+        command_drivers();
     } else if (text_equal(word, "firmware")) {
         show_firmware(screen);
     } else if (text_equal(word, "useradd") || text_equal(word, "userdel") ||
@@ -896,6 +925,7 @@ __attribute__((section(".text.startup"))) void kernel_main(void)
         write_line(screen, 2, "Stockage corrompu: nouvelle configuration requise.");
         wait_cycles(3000000000ULL);
     }
+    drivers_load(store_state != -1, read_port(0x64) != 0xff);
     if (!user_slot_used(0)) {
         first_boot_setup();
     }
