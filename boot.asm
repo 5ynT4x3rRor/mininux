@@ -124,5 +124,10 @@ back32:
 
 bits 16
 
+times 0x1be - ($ - $$) db 0
+; Table de partitions: le firmware Apple ignore une cle sans partition active.
+db 0x80, 0x00, 0x02, 0x00, 0x83, 0xff, 0xff, 0xff
+dd 1
+dd 0x00010000
 times 510 - ($ - $$) db 0
 dw 0xaa55
