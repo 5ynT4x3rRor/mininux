@@ -55,3 +55,16 @@ indication de firmware. `usb-next` et `usb-prev` changent de page.
 Attention : sur un vrai Mac, la prise de controle de l'xHCI peut couper
 l'emulation clavier PS/2 du BIOS. Le clavier peut cesser de repondre apres
 `usb` ; il faut alors redemarrer.
+
+## Rapport automatique sur la cle
+
+La commande `report` lance `hardware`, `firmware` puis `usb` toute seule et ecrit
+le texte dans les secteurs 64 a 191 de la cle de demarrage (via INT 13h, en
+repassant brievement en mode reel). Cette zone est hors de l'image (50 secteurs) :
+elle survit aux redemarrages et a un nouveau `dd` de l'image.
+
+Le rapport est ecrit deux fois : apres la phase PCI/firmware, puis apres le scan
+USB (si le BIOS ne sait plus ecrire sur la cle apres la prise de controle de
+l'xHCI, la phase PCI reste lisible). Sur Fedora :
+
+    make read-report DEV=/dev/sdX    # cree rapport-mininux.txt (sudo si besoin)

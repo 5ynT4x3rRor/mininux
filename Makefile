@@ -3,7 +3,7 @@ CC := gcc
 LD := ld
 QEMU := qemu-system-x86_64
 
-.PHONY: all run tinyc-check tinyc-test uefi-check uefi-image usb-image clean
+.PHONY: all run read-report tinyc-check tinyc-test uefi-check uefi-image usb-image clean
 
 all: mininux.img
 
@@ -30,6 +30,11 @@ mininux.img: boot.bin kernel.padded filesystem/manifest
 
 run: mininux.img
 	$(QEMU) -drive format=raw,file=$<
+
+read-report:
+	@test -n "$(DEV)" || { echo "usage: make read-report DEV=/dev/sdX"; exit 1; }
+	dd if=$(DEV) bs=512 skip=64 count=128 status=none | tr -d '\000' > rapport-mininux.txt
+	@echo "rapport-mininux.txt ecrit"
 
 usb-image: mininux.img
 	cp $< mininux-usb.img

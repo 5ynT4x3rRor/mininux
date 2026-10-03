@@ -19,6 +19,7 @@ static unsigned char pci_has_device(unsigned short vendor, unsigned short device
 static void show_hardware(volatile unsigned char *video, unsigned int page);
 static void show_firmware(volatile unsigned char *video);
 static void show_usb(volatile unsigned char *video, unsigned int page);
+static void run_report(volatile unsigned char *video);
 static unsigned char command_is(const char *command, unsigned int length, const char *name);
 static const char *usb_firmware_hint(const struct usb_entry *entry);
 static const char *pci_class_name(unsigned char class_code, unsigned char subclass);
@@ -133,6 +134,8 @@ void kernel_main(void)
                             usb_page--;
                         }
                         show_usb(video, usb_page);
+                    } else if (command_is(command, command_length, "report")) {
+                        run_report(video);
                     } else if (command_length != 0) {
                         write_line(video, 2, "Commande inconnue");
                     }
@@ -778,4 +781,120 @@ static void show_usb(volatile unsigned char *video, unsigned int page)
     position = append_decimal(line, position, pages);
     position = append_text(line, position, " | usb-next/prev");
     write_line(video, 23, line);
+}
+
+#define REPORT_BUFFER ((volatile char *)0x20000)
+#define REPORT_SIZE 65536U
+#define REPORT_LBA 64U
+#define REPORT_SECTORS 128U
+#define BIOS_WRITE_ENTRY 0x7d00U
+
+static unsigned int report_length;
+
+static void report_text(const char *text)
+{
+    for (unsigned int index = 0; text[index] != '\0' && report_length < REPORT_SIZE - 8U; index++) {
+        REPORT_BUFFER[report_length++] = text[index];
+    }
+}
+
+static void report_screen(const volatile unsigned char *video)
+{
+    for (unsigned int row = 2; row <= 23; row++) {
+        unsigned int last = 0;
+
+        for (unsigned int column = 0; column < 80; column++) {
+            if (video[(row * 80 + column) * 2] != ' ') {
+                last = column + 1;
+            }
+        }
+        if (last == 0) {
+            continue;
+        }
+        for (unsigned int column = 0; column < last && report_length < REPORT_SIZE - 8U; column++) {
+            REPORT_BUFFER[report_length++] = (char)video[(row * 80 + column) * 2];
+        }
+        report_text("\n");
+    }
+}
+
+/* Retourne le code BIOS (0 = succes). */
+static unsigned int report_flush(void)
+{
+    volatile unsigned int *dap = (volatile unsigned int *)0x600;
+    unsigned int status = 0;
+
+    for (unsigned int chunk = 0; chunk < REPORT_SECTORS / 16U && status == 0; chunk++) {
+        dap[0] = 0x00100010U;
+        dap[1] = ((0x2000U + chunk * 0x200U) << 16);
+        dap[2] = REPORT_LBA + chunk * 16U;
+        dap[3] = 0;
+        *(volatile unsigned char *)0x5fc = 0;
+        ((void (*)(void))BIOS_WRITE_ENTRY)();
+        status = *(volatile unsigned char *)0x5fc;
+    }
+    return status;
+}
+
+static void report_status(volatile unsigned char *video, unsigned int row,
+                          const char *label, unsigned int status)
+{
+    char line[80];
+    unsigned int position = 0;
+
+    line[0] = '\0';
+    position = append_text(line, position, label);
+    if (status == 0) {
+        append_text(line, position, "OK");
+    } else {
+        position = append_text(line, position, "echec BIOS 0x");
+        append_hex(line, position, status, 2);
+    }
+    write_line(video, row, line);
+}
+
+static void run_report(volatile unsigned char *video)
+{
+    unsigned int pages = (pci_count_devices() + 4U) / 5U;
+    unsigned int first_status;
+
+    for (unsigned int index = 0; index < REPORT_SIZE; index++) {
+        REPORT_BUFFER[index] = '\0';
+    }
+    report_length = 0;
+    report_text("MININUX RAPPORT MATERIEL\n\n");
+
+    for (unsigned int page = 0; page < (pages == 0 ? 1U : pages); page++) {
+        show_hardware(video, page);
+        report_screen(video);
+        report_text("\n");
+    }
+    show_firmware(video);
+    report_screen(video);
+    report_text("\n[phase PCI/firmware terminee]\n");
+
+    first_status = report_flush();
+    write_line(video, 2, "Rapport: phase PCI ecrite, scan USB en cours...");
+    report_status(video, 3, "Ecriture phase 1: ", first_status);
+
+    usb_page = 0;
+    usb_scanned = 1;
+    usb_count = usb_scan(usb_entries, USB_MAX, &usb_controllers, &usb_status);
+    pages = (usb_count + 4U) / 5U;
+    for (unsigned int page = 0; page < (pages == 0 ? 1U : pages); page++) {
+        show_usb(video, page);
+        report_screen(video);
+        report_text("\n");
+    }
+    report_text("[FIN DU RAPPORT]\n");
+
+    for (unsigned int row = 2; row <= 23; row++) {
+        for (unsigned int column = 0; column < 80; column++) {
+            video[(row * 80 + column) * 2] = ' ';
+        }
+    }
+    write_line(video, 2, "Rapport termine (secteurs 64-191 de la cle).");
+    report_status(video, 3, "Ecriture phase 1 (PCI): ", first_status);
+    report_status(video, 4, "Ecriture finale (USB): ", report_flush());
+    write_line(video, 6, "Sur Fedora: make read-report DEV=/dev/sdX");
 }
