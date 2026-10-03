@@ -92,3 +92,17 @@ l'xHCI, la phase PCI reste lisible). Sur Fedora :
 - Persistance : deux copies A/B (LBA 256 et 272) sur le disque de boot, validées par SHA-256.
 - Limites : pas de chiffrement ; un accès disque hors ligne permet de réécrire le stockage.
   Entropie faible sans RDRAND. Testé uniquement sous QEMU (BIOS), pas sur le Mac.
+
+## Arborescence
+
+```
+src/boot/      secteur de démarrage BIOS (boot.asm)
+src/kernel/    noyau : kernel.c, usb, crypto, persist (.c/.h)
+src/tinyc/     mini compilateur C
+src/uefi/      application UEFI (boot.c, font8x16.h)
+filesystem/    manifeste du système de fichiers
+scripts/       scripts de dev (dev.sh)
+build/         objets et binaires intermédiaires (ignoré par git)
+```
+
+`make` produit `mininux.img` (BIOS) ; `make mininux-uefi.img` produit l'image UEFI.
