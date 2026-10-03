@@ -120,3 +120,11 @@ associe chaque périphérique à un pilote (vendor/device ou classe) et appelle 
 La commande `drivers` affiche l'état : `charge`, `SANS PILOTE` ou `ECHEC`.
 Chargés aujourd'hui : vga-text, ps2-kbd, bios-disk, xhci (activation mémoire + bus mastering).
 Reconnus mais sans pilote : ahci, nvme, bcm4360 (Wi-Fi interne), Intel graphics, audio.
+
+## Terminal UEFI (pour le Mac)
+
+L'app UEFI (`mininux-uefi.img`) ouvre après le scan USB le même terminal que le noyau BIOS :
+premier démarrage (création de l'admin), login, utilisateurs, fichiers, arborescence `/usr/sys/bin`
+et `/root/sys/bin`. Les données sont dans `MNDISK.IMG` sur la partition EFI de la clé
+(persistant, lisible depuis Fedora). Le clavier passe par le firmware (ConIn).
+Le scan USB reste dans `MININUX.TXT` et s'affiche avec la commande `usb`.

@@ -273,67 +273,91 @@ static EFI_STATUS save_report(EFI_HANDLE image_handle, EFI_SYSTEM_TABLE *system_
     return status;
 }
 
-static VOID show_char(EFI_SIMPLE_TEXT_OUT_PROTOCOL *output, CHAR8 c)
+static EFI_SYSTEM_TABLE *g_system_table;
+static EFI_HANDLE g_image_handle;
+static EFI_SIMPLE_TEXT_OUT_PROTOCOL *g_output;
+
+VOID mininux_terminal(EFI_SYSTEM_TABLE *system_table);
+
+VOID con_print(CONST CHAR8 *text)
 {
-    CHAR8 text[2] = {c, '\0'};
-    show(output, text);
+    show(g_output, text);
 }
 
-static BOOLEAN same(CONST CHAR8 *a, CONST CHAR8 *b)
+VOID con_clear(VOID)
 {
-    while (*a != '\0' && *a == *b) {
-        a++;
-        b++;
+    if (gop != NULL) {
+        gop_clear(0x00103060);
+    } else {
+        uefi_call_wrapper(g_output->ClearScreen, 1, g_output);
     }
-    return *a == *b;
 }
 
-static VOID keyboard_shell(EFI_SYSTEM_TABLE *system_table, EFI_SIMPLE_TEXT_OUT_PROTOCOL *output)
+CONST CHAR8 *usb_report(VOID)
 {
-    CHAR8 line[80];
-    UINTN length = 0;
+    return report;
+}
 
-    show(output, "\r\nClavier: tapez 'help'.\r\n> ");
-    for (;;) {
-        EFI_INPUT_KEY key;
-        EFI_STATUS status = uefi_call_wrapper(system_table->ConIn->ReadKeyStroke, 2,
-                                              system_table->ConIn, &key);
+/* Disque MiniNux simule: fichier MNDISK.IMG sur la partition de boot. */
+int mn_uefi_disk_io(unsigned char func, unsigned int lba, unsigned int count, VOID *buffer)
+{
+    EFI_STATUS status;
+    EFI_LOADED_IMAGE_PROTOCOL *loaded_image = NULL;
+    EFI_SIMPLE_FILE_SYSTEM_PROTOCOL *file_system = NULL;
+    EFI_FILE_HANDLE root = NULL;
+    EFI_FILE_HANDLE file = NULL;
+    EFI_GUID loaded_image_guid = LOADED_IMAGE_PROTOCOL;
+    EFI_GUID file_system_guid = SIMPLE_FILE_SYSTEM_PROTOCOL;
+    CHAR16 file_name[] = L"\\MNDISK.IMG";
+    UINTN bytes = (UINTN)count * 512U;
+    int result = 1;
 
-        if (EFI_ERROR(status)) {
-            uefi_call_wrapper(system_table->BootServices->Stall, 1, 10000);
-            continue;
-        }
-        if (key.UnicodeChar == '\r' || key.UnicodeChar == '\n') {
-            line[length] = '\0';
-            show(output, "\r\n");
-            if (same(line, "help")) {
-                show(output, "help clear usb reboot shutdown ; sinon echo\r\n");
-            } else if (same(line, "clear")) {
-                gop_clear(0x00103060);
-            } else if (same(line, "usb")) {
-                show(output, report);
-            } else if (same(line, "reboot")) {
-                uefi_call_wrapper(system_table->RuntimeServices->ResetSystem, 4,
-                                  EfiResetCold, EFI_SUCCESS, 0, NULL);
-            } else if (same(line, "shutdown")) {
-                uefi_call_wrapper(system_table->RuntimeServices->ResetSystem, 4,
-                                  EfiResetShutdown, EFI_SUCCESS, 0, NULL);
-            } else if (length != 0) {
-                show(output, line);
-                show(output, "\r\n");
-            }
-            length = 0;
-            show(output, "> ");
-        } else if (key.UnicodeChar == 8) {
-            if (length != 0) {
-                length--;
-                show(output, "\b");
-            }
-        } else if (key.UnicodeChar >= 32 && key.UnicodeChar < 127 && length + 1 < sizeof(line)) {
-            line[length++] = (CHAR8)key.UnicodeChar;
-            show_char(output, (CHAR8)key.UnicodeChar);
-        }
+    status = uefi_call_wrapper(g_system_table->BootServices->HandleProtocol, 3,
+                               g_image_handle, &loaded_image_guid, (VOID **)&loaded_image);
+    if (EFI_ERROR(status) || loaded_image == NULL) {
+        return 1;
     }
+    status = uefi_call_wrapper(g_system_table->BootServices->HandleProtocol, 3,
+                               loaded_image->DeviceHandle, &file_system_guid, (VOID **)&file_system);
+    if (EFI_ERROR(status) || file_system == NULL) {
+        return 1;
+    }
+    status = uefi_call_wrapper(file_system->OpenVolume, 2, file_system, &root);
+    if (EFI_ERROR(status) || root == NULL) {
+        return 1;
+    }
+    status = uefi_call_wrapper(root->Open, 5, root, &file, file_name,
+                               func == 0x43 ? (EFI_FILE_MODE_READ | EFI_FILE_MODE_WRITE | EFI_FILE_MODE_CREATE)
+                                            : EFI_FILE_MODE_READ, 0);
+    if (!EFI_ERROR(status) && file != NULL) {
+        status = uefi_call_wrapper(file->SetPosition, 2, file, (UINT64)lba * 512U);
+        if (!EFI_ERROR(status)) {
+            if (func == 0x43) {
+                status = uefi_call_wrapper(file->Write, 3, file, &bytes, buffer);
+                if (!EFI_ERROR(status) && bytes == (UINTN)count * 512U) {
+                    uefi_call_wrapper(file->Flush, 1, file);
+                    result = 0;
+                }
+            } else {
+                status = uefi_call_wrapper(file->Read, 3, file, &bytes, buffer);
+                if (!EFI_ERROR(status)) {
+                    for (UINTN index = bytes; index < (UINTN)count * 512U; index++) {
+                        ((UINT8 *)buffer)[index] = 0;
+                    }
+                    result = 0;
+                }
+            }
+        }
+        uefi_call_wrapper(file->Close, 1, file);
+    } else if (func == 0x42) {
+        /* Pas encore de fichier: disque vierge. */
+        for (UINTN index = 0; index < (UINTN)count * 512U; index++) {
+            ((UINT8 *)buffer)[index] = 0;
+        }
+        result = 0;
+    }
+    uefi_call_wrapper(root->Close, 1, root);
+    return result;
 }
 
 EFI_STATUS efi_main(EFI_HANDLE image_handle, EFI_SYSTEM_TABLE *system_table)
@@ -343,6 +367,9 @@ EFI_STATUS efi_main(EFI_HANDLE image_handle, EFI_SYSTEM_TABLE *system_table)
     UINTN handle_count = 0;
     EFI_SIMPLE_TEXT_OUT_PROTOCOL *output = system_table->ConOut;
 
+    g_system_table = system_table;
+    g_image_handle = image_handle;
+    g_output = output;
     gop_init(system_table);
     gop_clear(0x00103060);
     show(output, "MiniNux UEFI: scan des peripheriques USB\r\n");
@@ -439,6 +466,6 @@ EFI_STATUS efi_main(EFI_HANDLE image_handle, EFI_SYSTEM_TABLE *system_table)
                 "\r\nRapport EFI non sauvegarde.\r\n" :
                 "\r\nRapport sauvegarde: MININUX.TXT\r\n");
 
-    keyboard_shell(system_table, output);
+    mininux_terminal(system_table);
     return EFI_SUCCESS;
 }

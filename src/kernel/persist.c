@@ -52,11 +52,22 @@ struct file_record {
 typedef char account_sector_size_check[sizeof(struct account_sector) == 512 ? 1 : -1];
 typedef char file_record_size_check[sizeof(struct file_record) == 256 ? 1 : -1];
 
+#ifdef MININUX_UEFI
+/* Sous UEFI, le tampon est statique et l'E/S passe par le fichier MNDISK.IMG. */
+static unsigned char store_buffer[STORE_SECTORS * 512U] __attribute__((aligned(16)));
+int mn_uefi_disk_io(unsigned char func, unsigned int lba, unsigned int count, void *buffer);
+#define STORE_IO(func, lba) mn_uefi_disk_io(func, lba, STORE_SECTORS, store_buffer)
+static struct account_sector *const accounts = (struct account_sector *)store_buffer;
+static struct file_record *const files = (struct file_record *)(store_buffer + 512);
+#else
+#define STORE_IO(func, lba) bios_disk_io(func, lba, STORE_SECTORS, STORE_BUFFER)
 static struct account_sector *const accounts = (struct account_sector *)STORE_BUFFER;
 static struct file_record *const files = (struct file_record *)(STORE_BUFFER + 512);
+#endif
 static unsigned int active_copy_lba;
 static unsigned char persistent;
 
+#ifndef MININUX_UEFI
 unsigned int bios_disk_io(unsigned char func, unsigned int lba,
                           unsigned int count, unsigned int linear_address)
 {
@@ -71,6 +82,8 @@ unsigned int bios_disk_io(unsigned char func, unsigned int lba,
     ((void (*)(void))BIOS_WRITE_ENTRY)();
     return *(volatile unsigned char *)0x5fc;
 }
+
+#endif
 
 static void compute_checks(void)
 {
@@ -127,7 +140,7 @@ static unsigned char store_is_sane(void)
 
 static int load_copy(unsigned int lba, unsigned int *sequence)
 {
-    if (bios_disk_io(0x42, lba, STORE_SECTORS, STORE_BUFFER) != 0) {
+    if (STORE_IO(0x42, lba) != 0) {
         return MN_ERR_IO;
     }
     if (!store_is_sane()) {
@@ -199,7 +212,7 @@ static int store_save_inner(void)
     if (!persistent) {
         return MN_ERR_IO;
     }
-    if (bios_disk_io(0x43, target, STORE_SECTORS, STORE_BUFFER) != 0) {
+    if (STORE_IO(0x43, target) != 0) {
         return MN_ERR_IO;
     }
     active_copy_lba = target;

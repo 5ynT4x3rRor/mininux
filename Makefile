@@ -85,8 +85,19 @@ uefi-check:
 $(U)/boot.o: $(U)/boot.c
 	$(CC) -I/usr/include/efi -I/usr/include/efi/x86_64 -ffreestanding -fpic -fshort-wchar -mno-red-zone -maccumulate-outgoing-args -fno-stack-protector -c $< -o $@
 
-$(U)/boot.so: $(U)/boot.o
-	$(LD) -nostdlib -znocombreloc -shared -Bsymbolic -T /usr/lib/elf_x86_64_efi.lds /usr/lib/crt0-efi-x86_64.o $< -L/usr/lib -lefi -lgnuefi -o $@
+UEFI_CFLAGS := -I/usr/include/efi -I/usr/include/efi/x86_64 -ffreestanding -fpic -fshort-wchar -mno-red-zone -maccumulate-outgoing-args -fno-stack-protector -fno-builtin
+
+$(U)/shell.o: $(U)/shell.c $(K)/crypto.h $(K)/persist.h
+	$(CC) $(UEFI_CFLAGS) -c $< -o $@
+
+$(U)/crypto.o: $(K)/crypto.c $(K)/crypto.h
+	$(CC) $(UEFI_CFLAGS) -c $< -o $@
+
+$(U)/persist.o: $(K)/persist.c $(K)/persist.h $(K)/crypto.h
+	$(CC) $(UEFI_CFLAGS) -DMININUX_UEFI -c $< -o $@
+
+$(U)/boot.so: $(U)/boot.o $(U)/shell.o $(U)/crypto.o $(U)/persist.o
+	$(LD) -nostdlib -znocombreloc -shared -Bsymbolic -T /usr/lib/elf_x86_64_efi.lds /usr/lib/crt0-efi-x86_64.o $^ -L/usr/lib -lefi -lgnuefi -o $@
 
 $(U)/BOOTX64.EFI: $(U)/boot.so
 	objcopy -I elf64-x86-64 -O efi-app-x86_64 -j .text -j .sdata -j .data -j .rodata -j .dynamic -j .dynsym -j .rel -j .rela -j .reloc $< $@
@@ -103,4 +114,4 @@ mininux-uefi.img: $(U)/BOOTX64.EFI
 	mcopy -i mininux-uefi.img@@1048576 $(U)/BOOTX64.EFI ::/EFI/BOOT/BOOTX64.EFI
 
 clean:
-	rm -rf $(B) mininux.img mininux-usb.img mininux-uefi.img $(U)/boot.o $(U)/boot.so $(U)/BOOTX64.EFI .mininux-tinyc-*.o
+	rm -rf $(B) mininux.img mininux-usb.img mininux-uefi.img $(U)/*.o $(U)/boot.so $(U)/BOOTX64.EFI .mininux-tinyc-*.o
